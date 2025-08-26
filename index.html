@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Race Tracker - Never Miss a Registration</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // Utility functions for date prediction
+        const dateUtils = {
+            addYears: (date, years) => {
+                const newDate = new Date(date);
+                newDate.setFullYear(newDate.getFullYear() + years);
+                return newDate.toISOString().split('T')[0];
+            },
+            
+            daysBetween: (date1, date2) => {
+                const d1 = new Date(date1);
+                const d2 = new Date(date2);
+                const diffTime = Math.abs(d2 - d1);
+                return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            },
+            
+            subtractDays: (date, days) => {
+                const d = new Date(date);
+                d.setDate(d.getDate() - days);
+                return d.toISOString().split('T')[0];
+            },
+            
+            predictNextRaceDate: (raceDate) => {
+                // Corrected date prediction logic
+                const d = new Date(raceDate + 'T00:00:00'); // Use specific time to avoid timezone issues
+                const nextYear = d.getFullYear() + 1;
+                const month = d.getMonth();
+                const dayOfWeek = d.getDay(); // 0=Sun, 1=Mon, ...
+                const date = d.getDate();
+                const weekOfMonth = Math.floor((date - 1) / 7);
+
+                const firstDayOfNextMonth = new Date(nextYear, month, 1).getDay();
+                
+                // Calculate the date of the first occurrence of the target weekday in the next year's month
+                let dateOfFirstMatchingWeekday = 1 + (dayOfWeek - firstDayOfNextMonth + 7) % 7;
+                
+                // Calculate the target date by adding the weeks
+                let targetDate = dateOfFirstMatchingWeekday + weekOfMonth * 7;
+                
+                const potentialDate = new Date(nextYear, month, targetDate);
+
+                // If the calculated date spills into the next month (e.g., 5th Saturday of a month that doesn't have one), go back a week.
+                if (potentialDate.getMonth() !== month) {
+                    targetDate -= 7;
+                }
+
+                return new Date(nextYear, month, targetDate).toISOString().split('T')[0];
+            },
+            
+            predictRegistrationOpen: (raceDate, nextRaceDate, lastRegOpen) => {
+                if (!lastRegOpen) {
+                    // Default: 4 months before race
+                    return dateUtils.subtractDays(nextRaceDate, 120);
+                }
+                const daysBefore = dateUtils.daysBetween(lastRegOpen, raceDate);
+                return dateUtils.subtractDays(nextRaceDate, daysBefore);
+            },
+            
+            formatDate: (dateStr) => {
+                if (!dateStr) return '';
+                const date = new Date(dateStr + 'T00:00:00');
+                return date.toLocaleDateString('en-US', { 
+                    weekday: 'short', 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: 'numeric' 
+                });
+            },
+            
+            daysUntil: (dateStr) => {
+                if (!dateStr) return Infinity;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const target = new Date(dateStr + 'T00:00:00');
+                const diff = target - today;
+                return Math.ceil(diff / (1000 * 60 * 60 * 24));
+            }
+        };
+
+        // Generate unique ID
+        const generateId = () => {
+            return `race_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        };
+
+        // Main App Component
+        function RaceTracker() {
+            const [races, setRaces] = useState(() => {
+                const saved = localStorage.getItem('raceTrackerData');
+                return saved ? JSON.parse(saved) : [];
+            });
+            
+            const [showForm, setShowForm] = useState(false);
+            const [editingRace, setEditingRace] = useState(null);
+            const [filters, setFilters] = useState({
+                status: 'all',
+                distance: 'all',
+                searchTerm: ''
+            });
+            const [sortBy, setSortBy] = useState('nextRaceDate');
+            const [notifications, setNotifications] = useState([]);
+
+            // Save to localStorage whenever races change
+            useEffect(() => {
+                localStorage.setItem('raceTrackerData', JSON.stringify(races));
+                checkNotifications();
+            }, [races]);
+
+            // Check for upcoming registration notifications
+            const checkNotifications = () => {
+                const today = new Date();
+                const newNotifications = [];
+                
+                races.forEach(race => {
+                    if (race.status === 'interested' && race.nextRegOpens) {
+                        const daysUntil = dateUtils.daysUntil(race.nextRegOpens);
+                        
+                        if (daysUntil >= 0 && daysUntil <= 5) {
+                            newNotifications.push({
+                                id: race.id,
+                                name: race.name,
+                                message: `Registration opens in ${daysUntil} days!`,
+                                daysUntil
+                            });
+                        }
+                    }
+                });
+                
+                setNotifications(newNotifications);
+            };
+
+            // Filter and sort races
+            const filteredAndSortedRaces = useMemo(() => {
+                let filtered = races;
+                
+                // Apply filters
+                if (filters.status !== 'all') {
+                    filtered = filtered.filter(r => r.status === filters.status);
+                }
+                
+                if (filters.distance !== 'all') {
+                    filtered = filtered.filter(r => 
+                        r.distances.some(d => d.toLowerCase().includes(filters.distance.toLowerCase()))
+                    );
+                }
+                
+                if (filters.searchTerm) {
+                    filtered = filtered.filter(r => 
+                        r.name.toLowerCase().includes(filters.searchTerm.toLowerCase()) ||
+                        (r.location && r.location.toLowerCase().includes(filters.searchTerm.toLowerCase()))
+                    );
+                }
+                
+                // Sort
+                return filtered.sort((a, b) => {
+                    const dateA = a.nextRaceDate || a.raceDate;
+                    const dateB = b.nextRaceDate || b.raceDate;
+                    const regA = a.nextRegOpens || a.registrationOpens;
+                    const regB = b.nextRegOpens || b.registrationOpens;
+
+                    switch (sortBy) {
+                        case 'nextRaceDate':
+                            if (!dateA) return 1;
+                            if (!dateB) return -1;
+                            return new Date(dateA) - new Date(dateB);
+                        case 'registrationOpens':
+                             if (!regA) return 1;
+                             if (!regB) return -1;
+                            return new Date(regA) - new Date(regB);
+                        case 'name':
+                            return a.name.localeCompare(b.name);
+                        default:
+                            return 0;
+                    }
+                });
+            }, [races, filters, sortBy]);
+
+            const saveRace = (raceData) => {
+                if (editingRace) {
+                    setRaces(races.map(r => r.id === editingRace.id ? raceData : r));
+                } else {
+                    setRaces([...races, raceData]);
+                }
+                setShowForm(false);
+                setEditingRace(null);
+            };
+
+            const deleteRace = (id) => {
+                if (window.confirm('Are you sure you want to delete this race?')) {
+                    setRaces(races.filter(r => r.id !== id));
+                }
+            };
+
+            const updateRaceStatus = (id, status) => {
+                setRaces(races.map(r => r.id === id ? { ...r, status } : r));
+            };
+
+            const stats = useMemo(() => {
+                return {
+                    total: races.length,
+                    interested: races.filter(r => r.status === 'interested').length,
+                    registered: races.filter(r => r.status === 'registered').length,
+                    completed: races.filter(r => r.status === 'completed').length,
+                    upcoming: races.filter(r => {
+                        const daysUntil = dateUtils.daysUntil(r.nextRaceDate || r.raceDate);
+                        return daysUntil >= 0 && daysUntil <= 90;
+                    }).length
+                };
+            }, [races]);
+
+            const handleExport = () => {
+                const dataStr = JSON.stringify(races, null, 2);
+                const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+                
+                const exportFileDefaultName = 'races-backup.json';
+                
+                const linkElement = document.createElement('a');
+                linkElement.setAttribute('href', dataUri);
+                linkElement.setAttribute('download', exportFileDefaultName);
+                linkElement.click();
+            };
+
+            const handleImport = (event) => {
+                const fileReader = new FileReader();
+                fileReader.onload = (e) => {
+                    try {
+                        const importedRaces = JSON.parse(e.target.result);
+                        if (Array.isArray(importedRaces)) {
+                            if (window.confirm('Are you sure you want to replace all current races with this import? This cannot be undone.')) {
+                                setRaces(importedRaces);
+                            }
+                        } else {
+                            alert('Import failed: The imported file is not in the correct format.');
+                        }
+                    } catch (error) {
+                        alert('Import failed: Could not read the file. Please ensure it is a valid JSON file.');
+                    }
+                };
+                if (event.target.files[0]) {
+                    fileReader.readAsText(event.target.files[0]);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {/* Header */}
+                    <header className="bg-blue-600 text-white shadow-lg">
+                        <div className="max-w-7xl mx-auto px-4 py-6">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h1 className="text-3xl font-bold">🏃 Race Tracker</h1>
+                                    <p className="text-blue-100 mt-1">Never miss a registration again</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <input 
+                                        type="file" 
+                                        id="import-file" 
+                                        className="hidden" 
+                                        accept=".json"
+                                        onChange={handleImport} 
+                                    />
+                                    <button 
+                                        onClick={() => document.getElementById('import-file').click()}
+                                        className="bg-gray-100 text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition"
+                                    >
+                                        Import
+                                    </button>
+                                    <button 
+                                        onClick={handleExport}
+                                        className="bg-gray-100 text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition"
+                                    >
+                                        Export
+                                    </button>
+                                    <button 
+                                        onClick={() => {
+                                            setEditingRace(null);
+                                            setShowForm(true);
+                                        }}
+                                        className="bg-white text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-blue-50 transition"
+                                    >
+                                        + Add Race
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Notifications */}
+                    {notifications.length > 0 && (
+                        <div className="max-w-7xl mx-auto px-4 mt-4">
+                            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 fade-in">
+                                <div className="flex">
+                                    <div className="ml-3">
+                                        <p className="text-sm font-medium text-yellow-800">
+                                            📣 Registration Alerts
+                                        </p>
+                                        {notifications.map(n => (
+                                            <p key={n.id} className="text-sm text-yellow-700 mt-1">
+                                                <strong>{n.name}</strong>: {n.message}
+                                            </p>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Stats Dashboard */}
+                    <div className="max-w-7xl mx-auto px-4 mt-6">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            <div className="bg-white p-4 rounded-lg shadow">
+                                <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
+                                <div className="text-sm text-gray-500">Total Races</div>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow">
+                                <div className="text-2xl font-bold text-blue-600">{stats.interested}</div>
+                                <div className="text-sm text-gray-500">Interested</div>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow">
+                                <div className="text-2xl font-bold text-green-600">{stats.registered}</div>
+                                <div className="text-sm text-gray-500">Registered</div>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow">
+                                <div className="text-2xl font-bold text-purple-600">{stats.completed}</div>
+                                <div className="text-sm text-gray-500">Completed</div>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow">
+                                <div className="text-2xl font-bold text-orange-600">{stats.upcoming}</div>
+                                <div className="text-sm text-gray-500">Next 90 Days</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Filters and Sort */}
+                    <div className="max-w-7xl mx-auto px-4 mt-6">
+                        <div className="bg-white p-4 rounded-lg shadow">
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                                <input
+                                    type="text"
+                                    placeholder="Search races..."
+                                    value={filters.searchTerm}
+                                    onChange={(e) => setFilters({...filters, searchTerm: e.target.value})}
+                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <select
+                                    value={filters.status}
+                                    onChange={(e) => setFilters({...filters, status: e.target.value})}
+                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="all">All Status</option>
+                                    <option value="interested">Interested</option>
+                                    <option value="registered">Registered</option>
+                                    <option value="waitlist">Waitlist</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="dns">DNS</option>
+                                    <option value="dnf">DNF</option>
+                                </select>
+                                <select
+                                    value={filters.distance}
+                                    onChange={(e) => setFilters({...filters, distance: e.target.value})}
+                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="all">All Distances</option>
+                                    <option value="10K">10K</option>
+                                    <option value="25K">25K</option>
+                                    <option value="50K">50K</option>
+                                    <option value="50M">50M</option>
+                                    <option value="100M">100M</option>
+                                    <option value="100K">100K</option>
+                                </select>
+                                <select
+                                    value={sortBy}
+                                    onChange={(e) => setSortBy(e.target.value)}
+                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="nextRaceDate">Race Date</option>
+                                    <option value="registrationOpens">Registration Opens</option>
+                                    <option value="name">Name</option>
+                                </select>
+                                <button
+                                    onClick={() => {
+                                        setFilters({ status: 'all', distance: 'all', searchTerm: '' });
+                                        setSortBy('nextRaceDate');
+                                    }}
+                                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
+                                >
+                                    Clear Filters
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Race List */}
+                    <div className="max-w-7xl mx-auto px-4 mt-6 pb-12">
+                        {filteredAndSortedRaces.length === 0 ? (
+                            <div className="bg-white p-12 rounded-lg shadow text-center">
+                                <p className="text-gray-500 text-lg">
+                                    {races.length === 0 
+                                        ? "No races added yet. Click 'Add Race' to get started!"
+                                        : "No races match your filters."}
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {filteredAndSortedRaces.map(race => (
+                                    <RaceCard 
+                                        key={race.id} 
+                                        race={race} 
+                                        onEdit={() => {
+                                            setEditingRace(race);
+                                            setShowForm(true);
+                                        }}
+                                        onDelete={() => deleteRace(race.id)}
+                                        onStatusChange={(status) => updateRaceStatus(race.id, status)}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Race Form Modal */}
+                    {showForm && (
+                        <RaceForm 
+                            race={editingRace}
+                            onSave={saveRace}
+                            onCancel={() => {
+                                setShowForm(false);
+                                setEditingRace(null);
+                            }}
+                        />
+                    )}
+                </div>
+            );
+        }
+
+        // Race Card Component
+        function RaceCard({ race, onEdit, onDelete, onStatusChange }) {
+            const displayRaceDate = race.nextRaceDate || race.raceDate;
+            const displayRegDate = race.nextRegOpens || race.registrationOpens;
+
+            const daysUntilRace = dateUtils.daysUntil(displayRaceDate);
+            const daysUntilReg = dateUtils.daysUntil(displayRegDate);
+            
+            const statusColors = {
+                interested: 'bg-blue-100 text-blue-800',
+                registered: 'bg-green-100 text-green-800',
+                waitlist: 'bg-yellow-100 text-yellow-800',
+                completed: 'bg-purple-100 text-purple-800',
+                dns: 'bg-gray-100 text-gray-800',
+                dnf: 'bg-red-100 text-red-800'
+            };
+
+            return (
+                <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6">
+                    <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                            <div className="flex items-center gap-4 mb-2">
+                                <h3 className="text-xl font-bold text-gray-900">{race.name}</h3>
+                                <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[race.status]}`}>
+                                    {race.status}
+                                </span>
+                            </div>
+                            
+                            <div className="text-gray-600 mb-3">
+                                📍 <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(race.location)}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{race.location}</a>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                <div>
+                                    <span className="text-sm text-gray-500">
+                                        {race.nextRegOpens ? 'Projected Registration:' : 'Registration Opens:'}
+                                    </span>
+                                    <div className="font-medium">
+                                        {dateUtils.formatDate(displayRegDate)}
+                                        {daysUntilReg >= 0 && daysUntilReg <= 30 && (
+                                            <span className="text-sm text-orange-600 ml-2 font-bold">
+                                                ({daysUntilReg} days!)
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                                <div>
+                                    <span className="text-sm text-gray-500">
+                                        {race.nextRaceDate ? 'Projected Race Date:' : 'Race Date:'}
+                                    </span>
+                                    <div className="font-medium">
+                                        {dateUtils.formatDate(displayRaceDate)}
+                                        {daysUntilRace >= 0 && (
+                                            <span className="text-sm text-blue-600 ml-2">
+                                                ({daysUntilRace} days)
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                                <div>
+                                    <span className="text-sm text-gray-500">Distances:</span>
+                                    <div className="font-medium">{race.distances.join(', ')}</div>
+                                </div>
+                            </div>
+
+                            {race.status === 'completed' && race.time && (
+                                <div className="border-t pt-3">
+                                    <span className="text-sm text-gray-500">Completed Time:</span>
+                                    <div className="font-medium">{race.time}</div>
+                                </div>
+                            )}
+
+                            {race.userNotes && (
+                                <div className="mt-3 p-3 bg-gray-50 rounded text-sm text-gray-700">
+                                    📝 {race.userNotes}
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div className="flex flex-col gap-2 ml-4">
+                            <button
+                                onClick={onEdit}
+                                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
+                            >
+                                Edit
+                            </button>
+                            <button
+                                onClick={onDelete}
+                                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition"
+                            >
+                                Delete
+                            </button>
+                            {race.url && (
+                                <a
+                                    href={race.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-center"
+                                >
+                                    Visit Site
+                                </a>
+                            )}
+                        </div>
+                    </div>
+                    
+                    {race.status === 'interested' && (
+                        <div className="mt-4 flex gap-2">
+                            <button
+                                onClick={() => onStatusChange('registered')}
+                                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition"
+                            >
+                                Mark as Registered
+                            </button>
+                            <button
+                                onClick={() => onStatusChange('waitlist')}
+                                className="px-3 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 transition"
+                            >
+                                Waitlist
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Race Form Component
+        function RaceForm({ race, onSave, onCancel }) {
+            const [formData, setFormData] = useState(race || {
+                id: generateId(),
+                name: '',
+                url: '',
+                location: '',
+                distances: [],
+                elevation: '',
+                price: '',
+                terrain: 'trail',
+                raceDate: '',
+                registrationOpens: '',
+                status: 'interested',
+                time: '', // For completed races
+                userNotes: '',
+                performances: [],
+                nextRaceDate: '',
+                nextRegOpens: '',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+
+            const [distanceInput, setDistanceInput] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                
+                let updatedData = { ...formData };
+                
+                if (formData.raceDate) {
+                    updatedData.nextRaceDate = dateUtils.predictNextRaceDate(formData.raceDate);
+                }
+                
+                if (updatedData.nextRaceDate && formData.registrationOpens) {
+                    updatedData.nextRegOpens = dateUtils.predictRegistrationOpen(
+                        formData.raceDate,
+                        updatedData.nextRaceDate,
+                        formData.registrationOpens
+                    );
+                }
+                
+                updatedData.updatedAt = new Date().toISOString();
+                onSave(updatedData);
+            };
+
+            const addDistance = () => {
+                if (distanceInput && !formData.distances.includes(distanceInput)) {
+                    setFormData({
+                        ...formData,
+                        distances: [...formData.distances, distanceInput]
+                    });
+                    setDistanceInput('');
+                }
+            };
+
+            const removeDistance = (distance) => {
+                setFormData({
+                    ...formData,
+                    distances: formData.distances.filter(d => d !== distance)
+                });
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                        <div className="p-6">
+                            <h2 className="text-2xl font-bold mb-6">
+                                {race ? 'Edit Race' : 'Add New Race'}
+                            </h2>
+                            
+                            <form onSubmit={handleSubmit}>
+                                {/* Basic Info */}
+                                <div className="space-y-4 mb-6">
+                                    <h3 className="font-semibold text-lg text-gray-700">Basic Information</h3>
+                                    
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Race Name *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                required
+                                                value={formData.name}
+                                                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Website URL
+                                            </label>
+                                            <input
+                                                type="url"
+                                                value={formData.url}
+                                                onChange={(e) => setFormData({...formData, url: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Location (e.g., City, Province)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="Address or City, Province"
+                                            value={formData.location}
+                                            onChange={(e) => setFormData({...formData, location: e.target.value})}
+                                            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">This will be saved as a link to Google Maps.</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Elevation (meters)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                value={formData.elevation}
+                                                onChange={(e) => setFormData({...formData, elevation: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Price (CAD)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={formData.price}
+                                                onChange={(e) => setFormData({...formData, price: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Terrain
+                                            </label>
+                                            <select
+                                                value={formData.terrain}
+                                                onChange={(e) => setFormData({...formData, terrain: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            >
+                                                <option value="trail">Trail</option>
+                                                <option value="road">Road</option>
+                                                <option value="mixed">Mixed</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Distances */}
+                                <div className="space-y-4 mb-6">
+                                    <h3 className="font-semibold text-lg text-gray-700">Distance</h3>
+                                    
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="e.g., 50K"
+                                            value={distanceInput}
+                                            onChange={(e) => setDistanceInput(e.target.value)}
+                                            onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addDistance())}
+                                            className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={addDistance}
+                                            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+                                        >
+                                            Add More
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="flex flex-wrap gap-2">
+                                        {formData.distances.map(d => (
+                                            <span key={d} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full flex items-center gap-2">
+                                                {d}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeDistance(d)}
+                                                    className="text-blue-600 hover:text-blue-800"
+                                                >
+                                                    ×
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Dates */}
+                                <div className="space-y-4 mb-6">
+                                    <h3 className="font-semibold text-lg text-gray-700">Current Race Dates</h3>
+                                     <p className="text-xs text-gray-500 -mt-3">Fill out current dates and we'll project when registration opens and the race may be held for next year.</p>
+                                    
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Registration Opens
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={formData.registrationOpens}
+                                                onChange={(e) => setFormData({...formData, registrationOpens: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Race Date *
+                                            </label>
+                                            <input
+                                                type="date"
+                                                required
+                                                value={formData.raceDate}
+                                                onChange={(e) => setFormData({...formData, raceDate: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Status and Notes */}
+                                <div className="space-y-4 mb-6">
+                                    <h3 className="font-semibold text-lg text-gray-700">Status & Notes</h3>
+                                    
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Status
+                                            </label>
+                                            <select
+                                                value={formData.status}
+                                                onChange={(e) => setFormData({...formData, status: e.target.value})}
+                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            >
+                                                <option value="interested">Interested</option>
+                                                <option value="registered">Registered</option>
+                                                <option value="waitlist">Waitlist</option>
+                                                <option value="completed">Completed</option>
+                                                <option value="dns">DNS</option>
+                                                <option value="dnf">DNF</option>
+                                            </select>
+                                        </div>
+                                        
+                                        {formData.status === 'completed' && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                    Completion Time (HH:MM:SS)
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g., 12:34:56"
+                                                    value={formData.time}
+                                                    onChange={(e) => setFormData({...formData, time: e.target.value})}
+                                                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Notes
+                                        </label>
+                                        <textarea
+                                            value={formData.userNotes}
+                                            onChange={(e) => setFormData({...formData, userNotes: e.target.value})}
+                                            rows="3"
+                                            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Buttons */}
+                                <div className="flex justify-end gap-4 pt-4 border-t">
+                                    <button
+                                        type="button"
+                                        onClick={onCancel}
+                                        className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+                                    >
+                                        {race ? 'Save Changes' : 'Add Race'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the app
+        ReactDOM.render(<RaceTracker />, document.getElementById('root'));
+    </script>
+</body>
+</html>

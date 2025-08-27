@@ -83,8 +83,8 @@
 
         const ageGradeUtils = {
             worldRecords: {
-                'M': { '5K': 752, '10K': 1571, '15K': 2470, '10M': 2685, '20K': 3411, 'HM': 3471, '25K': 4310, '30K': 5239, 'Marathon': 7235, '50K': 9462, '100K': 21992 },
-                'F': { '5K': 851, '10K': 1751, '15K': 2781, '10M': 3021, '20K': 3835, 'HM': 3869, '25K': 4792, '30K': 5837, 'Marathon': 8116, '50K': 10848, '100K': 24003 }
+                'M': { '5K': 752, '10K': 1571, '15K': 2470, '10M': 2685, '20K': 3411, 'HM': 3471, '25K': 4310, '30K': 5239, 'Marathon': 7235, '50K': 9462, '50M': 17408, '100K': 21992, '100M': 39099 },
+                'F': { '5K': 851, '10K': 1751, '15K': 2781, '10M': 3021, '20K': 3835, 'HM': 3869, '25K': 4792, '30K': 5837, 'Marathon': 8116, '50K': 10848, '50M': 20418, '100K': 24003, '100M': 45671 }
             },
             getAgeFactor: (age, gender) => {
                 if (age < 40) return 1.0;
@@ -112,7 +112,9 @@
                 if (dist.includes('30K')) return '30K';
                 if (dist.includes('42.2K') || dist.includes('MARATHON')) return 'Marathon';
                 if (dist.includes('50K')) return '50K';
+                if (dist.includes('50M')) return '50M';
                 if (dist.includes('100K')) return '100K';
+                if (dist.includes('100M')) return '100M';
                 return null;
             },
             calculate: (age, gender, distance, time) => {
@@ -129,15 +131,25 @@
             }
         };
         
-        const standardDistances = ['5K', '10K', '15K', '10M', '20K', 'HM', '25K', '30K', 'Marathon', '50K', '100K'];
+        const standardDistances = ['5K', '10K', '15K', '10M', '20K', 'HM', '25K', '30K', 'Marathon', '50K', '50M', '100K', '100M'];
         const generateId = () => `race_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+        const raceColors = ['#f87171', '#fb923c', '#fbbf24', '#a3e635', '#4ade80', '#34d399', '#2dd4bf', '#60a5fa', '#818cf8', '#a78bfa', '#e879f9', '#f472b6'];
+        const getColorForRace = (raceId) => {
+            let hash = 0;
+            for (let i = 0; i < raceId.length; i++) {
+                hash = raceId.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            return raceColors[Math.abs(hash) % raceColors.length];
+        };
+        const RaceDayIcon = () => <span className="absolute top-1 right-1 text-lg">純</span>;
+        
         function RaceTracker() {
             const [races, setRaces] = useState(() => JSON.parse(localStorage.getItem('raceTrackerData') || '[]'));
             const [showForm, setShowForm] = useState(false);
             const [editingRace, setEditingRace] = useState(null);
             const [completingRace, setCompletingRace] = useState(null);
-            const [filters, setFilters] = useState({ status: 'all', distance: 'all', searchTerm: '' });
+            const [filters, setFilters] = useState({ status: 'upcoming', distance: 'all', searchTerm: '' });
             const [sortBy, setSortBy] = useState('nextRaceDate');
             
             useEffect(() => {
@@ -192,14 +204,26 @@
             
             const filteredAndSortedRaces = useMemo(() => {
                 let filtered = races;
-                if (filters.status !== 'all') filtered = filtered.filter(r => r.status === filters.status);
-                if (filters.distance !== 'all') filtered = filtered.filter(r => r.distances.some(d => d.toLowerCase().includes(filters.distance.toLowerCase())));
+
+                if (filters.status === 'upcoming') {
+                    filtered = races.filter(r => r.status !== 'completed');
+                } else if (filters.status === 'completed') {
+                    filtered = races.filter(r => r.status === 'completed');
+                }
+
+                if (filters.distance !== 'all') filtered = filtered.filter(r => r.distances.some(d => d && d.toUpperCase().includes(filters.distance.toUpperCase())));
                 if (filters.searchTerm) filtered = filtered.filter(r => r.name.toLowerCase().includes(filters.searchTerm.toLowerCase()) || (r.location && r.location.toLowerCase().includes(filters.searchTerm.toLowerCase())));
+                
                 return filtered.sort((a, b) => {
                     const dateA = a.raceDate, dateB = b.raceDate, regA = a.registrationOpens, regB = b.registrationOpens;
+                    const sortDirection = filters.status === 'completed' ? -1 : 1;
                     switch (sortBy) {
-                        case 'nextRaceDate': if (!dateA) return 1; if (!dateB) return -1; return new Date(dateA) - new Date(dateB);
-                        case 'registrationOpens': if (!regA) return 1; if (!regB) return -1; return new Date(regA) - new Date(regB);
+                        case 'nextRaceDate': 
+                            if (!dateA) return 1; if (!dateB) return -1; 
+                            return (new Date(dateA) - new Date(dateB)) * sortDirection;
+                        case 'registrationOpens': 
+                            if (!regA) return 1; if (!regB) return -1; 
+                            return new Date(regA) - new Date(regB);
                         case 'name': return a.name.localeCompare(b.name);
                         default: return 0;
                     }
@@ -270,19 +294,24 @@
 
                      <div className="max-w-7xl mx-auto px-4 mt-6">
                         <div className="bg-white p-4 rounded-lg shadow">
-                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                <input type="text" placeholder="Search races..." value={filters.searchTerm} onChange={(e) => setFilters({...filters, searchTerm: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                                <select value={filters.status} onChange={(e) => setFilters({...filters, status: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="all">All Status</option><option value="interested">Interested</option><option value="registered">Registered</option><option value="waitlist">Waitlist</option><option value="completed">Completed</option>
-                                </select>
+                            <div className="flex justify-between items-center mb-4">
+                                <div className="flex rounded-lg border">
+                                    <button onClick={() => setFilters({...filters, status: 'upcoming'})} className={`px-4 py-2 text-sm font-semibold transition rounded-l-lg ${filters.status === 'upcoming' ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}>Upcoming</button>
+                                    <button onClick={() => setFilters({...filters, status: 'completed'})} className={`px-4 py-2 text-sm font-semibold transition rounded-r-lg ${filters.status === 'completed' ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}>Completed</button>
+                                </div>
+                                <button onClick={() => { setFilters({ status: 'upcoming', distance: 'all', searchTerm: '' }); setSortBy('nextRaceDate'); }} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-sm">Clear Filters</button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <input type="text" placeholder="Search races..." value={filters.searchTerm} onChange={(e) => setFilters({...filters, searchTerm: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 md:col-span-1" />
                                 <select value={filters.distance} onChange={(e) => setFilters({...filters, distance: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     <option value="all">All Distances</option>
                                     {standardDistances.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="nextRaceDate">Race Date</option><option value="registrationOpens">Registration Opens</option><option value="name">Name</option>
+                                    <option value="nextRaceDate">Race Date</option>
+                                    {filters.status === 'upcoming' && <option value="registrationOpens">Registration Opens</option>}
+                                    <option value="name">Name</option>
                                 </select>
-                                <button onClick={() => { setFilters({ status: 'all', distance: 'all', searchTerm: '' }); setSortBy('nextRaceDate'); }} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition">Clear Filters</button>
                             </div>
                         </div>
                     </div>
@@ -330,7 +359,7 @@
                                 {race.userNotes && (<div className="mt-3 p-3 bg-gray-50 rounded text-sm text-gray-700">📝 {race.userNotes}</div>)}
                             </div>
                             <div className="flex flex-col items-center gap-2 ml-4">
-                                <svg className="w-16 h-16 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M15.5 2.5a.5.5 0 0 1 .5.5v1.334a3.5 3.5 0 0 1 1.5 2.982V14.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 1.5 14.5V7.316a3.5 3.5 0 0 1 1.5-2.982V3a.5.5 0 0 1 .5-.5h12zM10 6a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 1 0v-1a.5.5 0 0 0-.5-.5zM8 6a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 1 0v-1A.5.5 0 0 0 8 6zm4 0a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 1 0v-1a.5.5 0 0 0-.5-.5z"/></svg>
+                                <svg className="w-16 h-16 text-yellow-500" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M10 2a.75.75 0 01.75.75v3.344l1.625-.938a.75.75 0 01.75 1.3l-2.5 1.443a.75.75 0 01-.75 0L7.125 6.438a.75.75 0 11.75-1.3L9.25 6.094V2.75A.75.75 0 0110 2zM10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z" clipRule="evenodd" /></svg>
                                 <button onClick={onEdit} className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition mt-2">Edit</button>
                             </div>
                         </div>
@@ -365,37 +394,86 @@
         
         function TrainingCalendar({ races }) {
             const [currentDate, setCurrentDate] = useState(new Date());
-            const trainingBlocks = useMemo(() => {
+
+            const { trainingBlocks, raceDays } = useMemo(() => {
                 const blocks = {};
+                const raceDays = new Set();
                 races.forEach(race => {
-                    if (!race.raceDate || new Date(race.raceDate) < new Date()) return;
-                    const isLongRace = race.distances.some(d => { const value = parseFloat(d), unit = d.toLowerCase().replace(/[0-9.]/g, ''); if (unit === 'k') return value > 21.1; if (unit === 'm') return true; return false; });
-                    const trainingWeeks = isLongRace ? 16 : 6;
-                    const startDate = dateUtils.subtractDays(race.raceDate, trainingWeeks * 7);
+                    if (!race.raceDate || new Date(race.raceDate) < new Date() || race.status === 'completed') return;
+                    
+                    const isLongRace = race.distances.some(d => {
+                        if (!d) return false;
+                        const value = parseFloat(d);
+                        const unit = d.toLowerCase().replace(/[0-9.-]/g, '');
+                        if (unit === 'k') return value > 21.1;
+                        if (unit.includes('m')) return true;
+                        return d.toLowerCase().includes('marathon');
+                    });
+
+                    const trainingWeeks = isLongRace ? 16 : 8;
+                    const startDate = dateUtils.subtractDays(race.raceDate, (trainingWeeks * 7) - 1);
                     let currentDateIter = new Date(startDate + 'T00:00:00');
                     const endDate = new Date(race.raceDate + 'T00:00:00');
+
+                    raceDays.add(race.raceDate);
+
                     while(currentDateIter <= endDate) {
                         const dateString = currentDateIter.toISOString().split('T')[0];
                         if (!blocks[dateString]) blocks[dateString] = [];
-                        blocks[dateString].push({ name: race.name, color: isLongRace ? 'bg-red-400' : 'bg-green-400' });
+                        blocks[dateString].push({ name: race.name, color: getColorForRace(race.id) });
                         currentDateIter.setDate(currentDateIter.getDate() + 1);
                     }
                 });
-                return blocks;
+                return { trainingBlocks: blocks, raceDays };
             }, [races]);
 
-            const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1), endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-            const startDay = startOfMonth.getDay(), daysInMonth = endOfMonth.getDate();
-            const today = new Date(); today.setHours(0,0,0,0);
+            const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+            const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+            const startDay = startOfMonth.getDay();
+            const daysInMonth = endOfMonth.getDate();
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            
             const calendarDays = [];
-            for (let i = 0; i < startDay; i++) calendarDays.push(<div key={`empty-${i}`} className="border p-2"></div>);
-            for (let day = 1; day <= daysInMonth; day++) {
-                const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day), dateString = date.toISOString().split('T')[0];
-                const isToday = date.getTime() === today.getTime(), dayBlocks = trainingBlocks[dateString] || [];
-                calendarDays.push(<div key={day} className={`border p-2 calendar-day ${isToday ? 'bg-blue-100' : ''}`}><div className="font-bold">{day}</div>{dayBlocks.map((block, i) => <div key={i} className={`training-bar ${block.color}`} title={block.name}></div>)}</div>);
+            for (let i = 0; i < startDay; i++) {
+                calendarDays.push(<div key={`empty-${i}`} className="border p-2 min-h-[100px]"></div>);
             }
 
-            return <div className="max-w-7xl mx-auto px-4 mt-6"><div className="bg-white p-4 rounded-lg shadow"><div className="flex justify-between items-center mb-4"><button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))}>&lt;</button><h3 className="text-lg font-semibold">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3><button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))}>&gt;</button></div><div className="grid grid-cols-7 gap-1 text-center">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} className="font-bold text-sm text-gray-600">{day}</div>)}{calendarDays}</div></div></div>;
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+                const dateString = date.toISOString().split('T')[0];
+                const isToday = date.getTime() === today.getTime();
+                const dayBlocks = trainingBlocks[dateString] || [];
+                const isRaceDay = raceDays.has(dateString);
+
+                calendarDays.push(
+                    <div key={day} className={`border p-2 min-h-[100px] calendar-day ${isToday ? 'bg-blue-100' : ''}`}>
+                        <div className="font-bold">{day}</div>
+                        {isRaceDay && <RaceDayIcon />}
+                        <div className="flex flex-col gap-px mt-1">
+                            {dayBlocks.map((block, i) => 
+                                <div key={i} className="h-1.5 rounded" style={{ backgroundColor: block.color }} title={block.name}></div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-7xl mx-auto px-4 mt-6">
+                    <div className="bg-white p-4 rounded-lg shadow">
+                        <div className="flex justify-between items-center mb-4">
+                            <button onClick={() => setCurrentDate(prev => new Date(prev.setMonth(prev.getMonth() - 1)))} className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">&lt;</button>
+                            <h3 className="text-lg font-semibold">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
+                            <button onClick={() => setCurrentDate(prev => new Date(prev.setMonth(prev.getMonth() + 1)))} className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">&gt;</button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1 text-center">
+                            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} className="font-bold text-sm text-gray-600 py-2">{day}</div>)}
+                            {calendarDays}
+                        </div>
+                    </div>
+                </div>
+            );
         }
 
         function DistanceInput({ value, onChange }) {
@@ -403,34 +481,47 @@
             const selectValue = isOther ? 'Other' : value;
 
             return (
-                <div className="flex items-center gap-2">
-                    <select value={selectValue} onChange={(e) => onChange(e.target.value === 'Other' ? '' : e.target.value)} className="w-full px-3 py-2 border rounded-lg">
+                <div className="flex items-center gap-2 w-full">
+                    <select value={selectValue} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
                         <option value="">Select Distance</option>
                         {standardDistances.map(d => <option key={d} value={d}>{d}</option>)}
                         <option value="Other">Other...</option>
                     </select>
                     {selectValue === 'Other' && (
-                        <input type="text" placeholder="Custom" value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+                        <input
+                            type="text"
+                            placeholder="Custom"
+                            value={value === 'Other' ? '' : value}
+                            onChange={(e) => onChange(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg"
+                        />
                     )}
                 </div>
             );
         }
 
         function RaceForm({ race, onSave, onCancel, onDelete, onCompleteNewRace }) {
-            const [formData, setFormData] = useState(race || { id: generateId(), name: '', url: '', location: '', distances: [''], elevation: '', price: '', terrain: 'road', raceDate: '', registrationOpens: '', status: 'interested', time: '', userNotes: '', isProjected: false, isRecurring: false, dateEntryType: 'project' });
+            const [formData, setFormData] = useState(race || { id: generateId(), name: '', url: '', location: '', distances: [''], elevation: '', price: '', terrain: 'road', raceDate: '', registrationOpens: '', status: 'interested', time: '', userNotes: '', isProjected: false, isRecurring: false, dateEntryType: 'known' });
             useEffect(() => { if (race) setFormData(prev => ({...prev, dateEntryType: race.isProjected ? 'project' : 'known'})); }, [race]);
 
             const handleSubmit = (e) => {
                 e.preventDefault();
                 let finalData = { ...formData, distances: formData.distances.filter(d => d && d.trim() !== '') };
-                if (formData.dateEntryType === 'project') {
+                
+                if (formData.dateEntryType === 'project' && !race) { // Only project for new races
                     finalData.isProjected = true;
                     const projectedRaceDate = dateUtils.predictNextRaceDate(formData.raceDate);
                     finalData.registrationOpens = dateUtils.predictRegistrationOpen(formData.raceDate, projectedRaceDate, formData.registrationOpens);
                     finalData.raceDate = projectedRaceDate;
                 } else {
-                    finalData.isProjected = false;
+                    finalData.isProjected = race ? race.isProjected : false;
                 }
+
+                // If editing a completed race, recalculate age grade
+                if (finalData.status === 'completed' && finalData.ageAtRace) {
+                    finalData.ageGrade = ageGradeUtils.calculate(finalData.ageAtRace, finalData.gender, finalData.distances[0], finalData.time);
+                }
+
                 if (!race && finalData.status === 'completed') {
                     onCompleteNewRace(finalData);
                 } else {

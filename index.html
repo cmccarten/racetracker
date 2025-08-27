@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Race Tracker - Never Miss a Registration</title>
+    <title>Start Line - The ultimate race planning tool</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -11,6 +11,25 @@
     <style>
         .fade-in { animation: fadeIn 0.3s ease-in; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .calendar-day {
+            position: relative;
+            padding-bottom: 4px;
+        }
+        .training-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            border-radius: 2px;
+        }
+        .status-continuum button {
+            flex: 1;
+            border-radius: 0;
+            border-right: 1px solid #d1d5db;
+        }
+        .status-continuum button:first-child { border-radius: 0.375rem 0 0 0.375rem; }
+        .status-continuum button:last-child { border-radius: 0 0.375rem 0.375rem 0; border-right: 0; }
     </style>
 </head>
 <body>
@@ -19,74 +38,39 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // Utility functions for date prediction
+        // Utility functions
         const dateUtils = {
-            addYears: (date, years) => {
-                const newDate = new Date(date);
-                newDate.setFullYear(newDate.getFullYear() + years);
-                return newDate.toISOString().split('T')[0];
-            },
-            
-            daysBetween: (date1, date2) => {
-                const d1 = new Date(date1);
-                const d2 = new Date(date2);
-                const diffTime = Math.abs(d2 - d1);
-                return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            },
-            
             subtractDays: (date, days) => {
                 const d = new Date(date);
                 d.setDate(d.getDate() - days);
                 return d.toISOString().split('T')[0];
             },
-            
             predictNextRaceDate: (raceDate) => {
-                // Corrected date prediction logic
-                const d = new Date(raceDate + 'T00:00:00'); // Use specific time to avoid timezone issues
+                const d = new Date(raceDate + 'T00:00:00');
                 const nextYear = d.getFullYear() + 1;
                 const month = d.getMonth();
-                const dayOfWeek = d.getDay(); // 0=Sun, 1=Mon, ...
+                const dayOfWeek = d.getDay();
                 const date = d.getDate();
                 const weekOfMonth = Math.floor((date - 1) / 7);
-
                 const firstDayOfNextMonth = new Date(nextYear, month, 1).getDay();
-                
-                // Calculate the date of the first occurrence of the target weekday in the next year's month
                 let dateOfFirstMatchingWeekday = 1 + (dayOfWeek - firstDayOfNextMonth + 7) % 7;
-                
-                // Calculate the target date by adding the weeks
                 let targetDate = dateOfFirstMatchingWeekday + weekOfMonth * 7;
-                
                 const potentialDate = new Date(nextYear, month, targetDate);
-
-                // If the calculated date spills into the next month (e.g., 5th Saturday of a month that doesn't have one), go back a week.
                 if (potentialDate.getMonth() !== month) {
                     targetDate -= 7;
                 }
-
                 return new Date(nextYear, month, targetDate).toISOString().split('T')[0];
             },
-            
             predictRegistrationOpen: (raceDate, nextRaceDate, lastRegOpen) => {
-                if (!lastRegOpen) {
-                    // Default: 4 months before race
-                    return dateUtils.subtractDays(nextRaceDate, 120);
-                }
-                const daysBefore = dateUtils.daysBetween(lastRegOpen, raceDate);
-                return dateUtils.subtractDays(nextRaceDate, daysBefore);
+                if (!lastRegOpen) return dateUtils.subtractDays(nextRaceDate, 120);
+                const daysBetween = Math.ceil(Math.abs(new Date(raceDate) - new Date(lastRegOpen)) / (1000 * 60 * 60 * 24));
+                return dateUtils.subtractDays(nextRaceDate, daysBetween);
             },
-            
             formatDate: (dateStr) => {
                 if (!dateStr) return '';
                 const date = new Date(dateStr + 'T00:00:00');
-                return date.toLocaleDateString('en-US', { 
-                    weekday: 'short', 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: 'numeric' 
-                });
+                return date.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
             },
-            
             daysUntil: (dateStr) => {
                 if (!dateStr) return Infinity;
                 const today = new Date();
@@ -97,145 +81,145 @@
             }
         };
 
-        // Generate unique ID
-        const generateId = () => {
-            return `race_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const ageGradeUtils = {
+            worldRecords: {
+                'M': { '5K': 752, '10K': 1571, '15K': 2470, '10M': 2685, '20K': 3411, 'HM': 3471, '25K': 4310, '30K': 5239, 'Marathon': 7235, '50K': 9462, '100K': 21992 },
+                'F': { '5K': 851, '10K': 1751, '15K': 2781, '10M': 3021, '20K': 3835, 'HM': 3869, '25K': 4792, '30K': 5837, 'Marathon': 8116, '50K': 10848, '100K': 24003 }
+            },
+            getAgeFactor: (age, gender) => {
+                if (age < 40) return 1.0;
+                if (age > 90) return 0.4;
+                return 1.0 - ((age - 39) * 0.008);
+            },
+            parseTimeToSeconds: (timeStr) => {
+                if (!timeStr) return 0;
+                const parts = timeStr.split(':').map(Number);
+                if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+                if (parts.length === 2) return parts[0] * 60 + parts[1];
+                return 0;
+            },
+            getStandardizedDistance: (distStr) => {
+                if (!distStr) return null;
+                const dist = distStr.toUpperCase();
+                if (standardDistances.includes(dist)) return dist;
+                if (dist.includes('5K')) return '5K';
+                if (dist.includes('10K')) return '10K';
+                if (dist.includes('15K')) return '15K';
+                if (dist.includes('10M')) return '10M';
+                if (dist.includes('20K')) return '20K';
+                if (dist.includes('21.1K') || dist.includes('HM')) return 'HM';
+                if (dist.includes('25K')) return '25K';
+                if (dist.includes('30K')) return '30K';
+                if (dist.includes('42.2K') || dist.includes('MARATHON')) return 'Marathon';
+                if (dist.includes('50K')) return '50K';
+                if (dist.includes('100K')) return '100K';
+                return null;
+            },
+            calculate: (age, gender, distance, time) => {
+                const stdDistance = ageGradeUtils.getStandardizedDistance(distance);
+                if (!age || !gender || !stdDistance || !time) return null;
+                const wrSeconds = ageGradeUtils.worldRecords[gender]?.[stdDistance];
+                if (!wrSeconds) return null;
+                const userSeconds = ageGradeUtils.parseTimeToSeconds(time);
+                if (userSeconds === 0) return null;
+                const ageFactor = ageGradeUtils.getAgeFactor(age, gender);
+                const ageGradedWr = wrSeconds / ageFactor;
+                const score = (ageGradedWr / userSeconds) * 100;
+                return Math.min(100, score).toFixed(2);
+            }
         };
+        
+        const standardDistances = ['5K', '10K', '15K', '10M', '20K', 'HM', '25K', '30K', 'Marathon', '50K', '100K'];
+        const generateId = () => `race_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // Main App Component
         function RaceTracker() {
-            const [races, setRaces] = useState(() => {
-                const saved = localStorage.getItem('raceTrackerData');
-                return saved ? JSON.parse(saved) : [];
-            });
-            
+            const [races, setRaces] = useState(() => JSON.parse(localStorage.getItem('raceTrackerData') || '[]'));
             const [showForm, setShowForm] = useState(false);
             const [editingRace, setEditingRace] = useState(null);
-            const [filters, setFilters] = useState({
-                status: 'all',
-                distance: 'all',
-                searchTerm: ''
-            });
+            const [completingRace, setCompletingRace] = useState(null);
+            const [filters, setFilters] = useState({ status: 'all', distance: 'all', searchTerm: '' });
             const [sortBy, setSortBy] = useState('nextRaceDate');
-            const [notifications, setNotifications] = useState([]);
-
-            // Save to localStorage whenever races change
+            
             useEffect(() => {
                 localStorage.setItem('raceTrackerData', JSON.stringify(races));
-                checkNotifications();
+                const completedRecurring = races.filter(r => r.status === 'completed' && r.isRecurring && !r.recurrenceProcessed);
+                if (completedRecurring.length > 0) {
+                    let newRaces = [];
+                    let updatedRaces = [...races];
+                    completedRecurring.forEach(race => {
+                        const newRace = { ...race, id: generateId(), status: 'interested', isProjected: true, raceDate: dateUtils.predictNextRaceDate(race.raceDate), registrationOpens: dateUtils.predictRegistrationOpen(race.raceDate, dateUtils.predictNextRaceDate(race.raceDate), race.registrationOpens), time: '', completionState: null, ageGrade: null, recurrenceProcessed: false };
+                        newRaces.push(newRace);
+                        const originalRaceIndex = updatedRaces.findIndex(r => r.id === race.id);
+                        if(originalRaceIndex > -1) updatedRaces[originalRaceIndex].recurrenceProcessed = true;
+                    });
+                    setRaces([...updatedRaces, ...newRaces]);
+                }
             }, [races]);
 
-            // Check for upcoming registration notifications
-            const checkNotifications = () => {
-                const today = new Date();
-                const newNotifications = [];
-                
-                races.forEach(race => {
-                    if (race.status === 'interested' && race.nextRegOpens) {
-                        const daysUntil = dateUtils.daysUntil(race.nextRegOpens);
-                        
-                        if (daysUntil >= 0 && daysUntil <= 5) {
-                            newNotifications.push({
-                                id: race.id,
-                                name: race.name,
-                                message: `Registration opens in ${daysUntil} days!`,
-                                daysUntil
-                            });
-                        }
-                    }
-                });
-                
-                setNotifications(newNotifications);
-            };
-
-            // Filter and sort races
-            const filteredAndSortedRaces = useMemo(() => {
-                let filtered = races;
-                
-                // Apply filters
-                if (filters.status !== 'all') {
-                    filtered = filtered.filter(r => r.status === filters.status);
-                }
-                
-                if (filters.distance !== 'all') {
-                    filtered = filtered.filter(r => 
-                        r.distances.some(d => d.toLowerCase().includes(filters.distance.toLowerCase()))
-                    );
-                }
-                
-                if (filters.searchTerm) {
-                    filtered = filtered.filter(r => 
-                        r.name.toLowerCase().includes(filters.searchTerm.toLowerCase()) ||
-                        (r.location && r.location.toLowerCase().includes(filters.searchTerm.toLowerCase()))
-                    );
-                }
-                
-                // Sort
-                return filtered.sort((a, b) => {
-                    const dateA = a.nextRaceDate || a.raceDate;
-                    const dateB = b.nextRaceDate || b.raceDate;
-                    const regA = a.nextRegOpens || a.registrationOpens;
-                    const regB = b.nextRegOpens || b.registrationOpens;
-
-                    switch (sortBy) {
-                        case 'nextRaceDate':
-                            if (!dateA) return 1;
-                            if (!dateB) return -1;
-                            return new Date(dateA) - new Date(dateB);
-                        case 'registrationOpens':
-                             if (!regA) return 1;
-                             if (!regB) return -1;
-                            return new Date(regA) - new Date(regB);
-                        case 'name':
-                            return a.name.localeCompare(b.name);
-                        default:
-                            return 0;
-                    }
-                });
-            }, [races, filters, sortBy]);
-
             const saveRace = (raceData) => {
-                if (editingRace) {
-                    setRaces(races.map(r => r.id === editingRace.id ? raceData : r));
+                const raceIndex = races.findIndex(r => r.id === raceData.id);
+                if (raceIndex > -1) {
+                    const updatedRaces = [...races];
+                    updatedRaces[raceIndex] = raceData;
+                    setRaces(updatedRaces);
                 } else {
                     setRaces([...races, raceData]);
                 }
                 setShowForm(false);
                 setEditingRace(null);
+                setCompletingRace(null);
+            };
+
+            const handleCompleteNewRace = (raceData) => {
+                setShowForm(false);
+                setEditingRace(null);
+                setCompletingRace(raceData);
             };
 
             const deleteRace = (id) => {
-                if (window.confirm('Are you sure you want to delete this race?')) {
-                    setRaces(races.filter(r => r.id !== id));
-                }
+                setRaces(races.filter(r => r.id !== id));
+                setShowForm(false);
+                setEditingRace(null);
             };
 
             const updateRaceStatus = (id, status) => {
-                setRaces(races.map(r => r.id === id ? { ...r, status } : r));
+                if (status === 'completed') {
+                    setCompletingRace(races.find(r => r.id === id));
+                } else {
+                    setRaces(races.map(r => r.id === id ? { ...r, status } : r));
+                }
             };
+            
+            const filteredAndSortedRaces = useMemo(() => {
+                let filtered = races;
+                if (filters.status !== 'all') filtered = filtered.filter(r => r.status === filters.status);
+                if (filters.distance !== 'all') filtered = filtered.filter(r => r.distances.some(d => d.toLowerCase().includes(filters.distance.toLowerCase())));
+                if (filters.searchTerm) filtered = filtered.filter(r => r.name.toLowerCase().includes(filters.searchTerm.toLowerCase()) || (r.location && r.location.toLowerCase().includes(filters.searchTerm.toLowerCase())));
+                return filtered.sort((a, b) => {
+                    const dateA = a.raceDate, dateB = b.raceDate, regA = a.registrationOpens, regB = b.registrationOpens;
+                    switch (sortBy) {
+                        case 'nextRaceDate': if (!dateA) return 1; if (!dateB) return -1; return new Date(dateA) - new Date(dateB);
+                        case 'registrationOpens': if (!regA) return 1; if (!regB) return -1; return new Date(regA) - new Date(regB);
+                        case 'name': return a.name.localeCompare(b.name);
+                        default: return 0;
+                    }
+                });
+            }, [races, filters, sortBy]);
 
-            const stats = useMemo(() => {
-                return {
-                    total: races.length,
-                    interested: races.filter(r => r.status === 'interested').length,
-                    registered: races.filter(r => r.status === 'registered').length,
-                    completed: races.filter(r => r.status === 'completed').length,
-                    upcoming: races.filter(r => {
-                        const daysUntil = dateUtils.daysUntil(r.nextRaceDate || r.raceDate);
-                        return daysUntil >= 0 && daysUntil <= 90;
-                    }).length
-                };
-            }, [races]);
+            const stats = useMemo(() => ({
+                total: races.length,
+                interested: races.filter(r => r.status === 'interested').length,
+                registered: races.filter(r => r.status === 'registered').length,
+                completed: races.filter(r => r.status === 'completed').length,
+                upcoming: races.filter(r => dateUtils.daysUntil(r.raceDate) >= 0 && dateUtils.daysUntil(r.raceDate) <= 90).length
+            }), [races]);
 
             const handleExport = () => {
                 const dataStr = JSON.stringify(races, null, 2);
                 const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-                
-                const exportFileDefaultName = 'races-backup.json';
-                
                 const linkElement = document.createElement('a');
                 linkElement.setAttribute('href', dataUri);
-                linkElement.setAttribute('download', exportFileDefaultName);
+                linkElement.setAttribute('download', 'races-backup.json');
                 linkElement.click();
             };
 
@@ -244,643 +228,261 @@
                 fileReader.onload = (e) => {
                     try {
                         const importedRaces = JSON.parse(e.target.result);
-                        if (Array.isArray(importedRaces)) {
-                            if (window.confirm('Are you sure you want to replace all current races with this import? This cannot be undone.')) {
-                                setRaces(importedRaces);
-                            }
+                        if (Array.isArray(importedRaces) && window.confirm('Are you sure you want to replace all current races with this import? This cannot be undone.')) {
+                            setRaces(importedRaces);
                         } else {
-                            alert('Import failed: The imported file is not in the correct format.');
+                            alert('Import failed: Invalid file format.');
                         }
                     } catch (error) {
-                        alert('Import failed: Could not read the file. Please ensure it is a valid JSON file.');
+                        alert('Import failed: Could not read the file.');
                     }
                 };
-                if (event.target.files[0]) {
-                    fileReader.readAsText(event.target.files[0]);
-                }
+                if (event.target.files[0]) fileReader.readAsText(event.target.files[0]);
             };
 
             return (
                 <div className="min-h-screen bg-gray-50">
-                    {/* Header */}
                     <header className="bg-blue-600 text-white shadow-lg">
                         <div className="max-w-7xl mx-auto px-4 py-6">
                             <div className="flex justify-between items-center">
-                                <div>
-                                    <h1 className="text-3xl font-bold">🏃 Race Tracker</h1>
-                                    <p className="text-blue-100 mt-1">Never miss a registration again</p>
-                                </div>
+                                <div><h1 className="text-3xl font-bold">🏃 StartLine</h1><p className="text-blue-100 mt-1">The ultimate race planning tool.</p></div>
                                 <div className="flex items-center gap-2">
-                                    <input 
-                                        type="file" 
-                                        id="import-file" 
-                                        className="hidden" 
-                                        accept=".json"
-                                        onChange={handleImport} 
-                                    />
-                                    <button 
-                                        onClick={() => document.getElementById('import-file').click()}
-                                        className="bg-gray-100 text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition"
-                                    >
-                                        Import
-                                    </button>
-                                    <button 
-                                        onClick={handleExport}
-                                        className="bg-gray-100 text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition"
-                                    >
-                                        Export
-                                    </button>
-                                    <button 
-                                        onClick={() => {
-                                            setEditingRace(null);
-                                            setShowForm(true);
-                                        }}
-                                        className="bg-white text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-blue-50 transition"
-                                    >
-                                        + Add Race
-                                    </button>
+                                    <input type="file" id="import-file" className="hidden" accept=".json" onChange={handleImport} />
+                                    <button onClick={() => document.getElementById('import-file').click()} className="bg-gray-100 text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition">Import</button>
+                                    <button onClick={handleExport} className="bg-gray-100 text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-200 transition">Export</button>
+                                    <button onClick={() => { setEditingRace(null); setShowForm(true); }} className="bg-white text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-blue-50 transition">+ Add Race</button>
                                 </div>
                             </div>
                         </div>
                     </header>
-
-                    {/* Notifications */}
-                    {notifications.length > 0 && (
-                        <div className="max-w-7xl mx-auto px-4 mt-4">
-                            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 fade-in">
-                                <div className="flex">
-                                    <div className="ml-3">
-                                        <p className="text-sm font-medium text-yellow-800">
-                                            📣 Registration Alerts
-                                        </p>
-                                        {notifications.map(n => (
-                                            <p key={n.id} className="text-sm text-yellow-700 mt-1">
-                                                <strong>{n.name}</strong>: {n.message}
-                                            </p>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Stats Dashboard */}
+                    
                     <div className="max-w-7xl mx-auto px-4 mt-6">
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                            <div className="bg-white p-4 rounded-lg shadow">
-                                <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-                                <div className="text-sm text-gray-500">Total Races</div>
-                            </div>
-                            <div className="bg-white p-4 rounded-lg shadow">
-                                <div className="text-2xl font-bold text-blue-600">{stats.interested}</div>
-                                <div className="text-sm text-gray-500">Interested</div>
-                            </div>
-                            <div className="bg-white p-4 rounded-lg shadow">
-                                <div className="text-2xl font-bold text-green-600">{stats.registered}</div>
-                                <div className="text-sm text-gray-500">Registered</div>
-                            </div>
-                            <div className="bg-white p-4 rounded-lg shadow">
-                                <div className="text-2xl font-bold text-purple-600">{stats.completed}</div>
-                                <div className="text-sm text-gray-500">Completed</div>
-                            </div>
-                            <div className="bg-white p-4 rounded-lg shadow">
-                                <div className="text-2xl font-bold text-orange-600">{stats.upcoming}</div>
-                                <div className="text-sm text-gray-500">Next 90 Days</div>
-                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow"><div className="text-2xl font-bold text-gray-900">{stats.total}</div><div className="text-sm text-gray-500">Total Races</div></div>
+                            <div className="bg-white p-4 rounded-lg shadow"><div className="text-2xl font-bold text-blue-600">{stats.interested}</div><div className="text-sm text-gray-500">Interested</div></div>
+                            <div className="bg-white p-4 rounded-lg shadow"><div className="text-2xl font-bold text-green-600">{stats.registered}</div><div className="text-sm text-gray-500">Registered</div></div>
+                            <div className="bg-white p-4 rounded-lg shadow"><div className="text-2xl font-bold text-purple-600">{stats.completed}</div><div className="text-sm text-gray-500">Completed</div></div>
+                            <div className="bg-white p-4 rounded-lg shadow"><div className="text-2xl font-bold text-orange-600">{stats.upcoming}</div><div className="text-sm text-gray-500">Next 90 Days</div></div>
                         </div>
                     </div>
 
-                    {/* Filters and Sort */}
-                    <div className="max-w-7xl mx-auto px-4 mt-6">
+                    <TrainingCalendar races={races} />
+
+                     <div className="max-w-7xl mx-auto px-4 mt-6">
                         <div className="bg-white p-4 rounded-lg shadow">
                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                <input
-                                    type="text"
-                                    placeholder="Search races..."
-                                    value={filters.searchTerm}
-                                    onChange={(e) => setFilters({...filters, searchTerm: e.target.value})}
-                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                                <select
-                                    value={filters.status}
-                                    onChange={(e) => setFilters({...filters, status: e.target.value})}
-                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="all">All Status</option>
-                                    <option value="interested">Interested</option>
-                                    <option value="registered">Registered</option>
-                                    <option value="waitlist">Waitlist</option>
-                                    <option value="completed">Completed</option>
-                                    <option value="dns">DNS</option>
-                                    <option value="dnf">DNF</option>
+                                <input type="text" placeholder="Search races..." value={filters.searchTerm} onChange={(e) => setFilters({...filters, searchTerm: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                <select value={filters.status} onChange={(e) => setFilters({...filters, status: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="all">All Status</option><option value="interested">Interested</option><option value="registered">Registered</option><option value="waitlist">Waitlist</option><option value="completed">Completed</option>
                                 </select>
-                                <select
-                                    value={filters.distance}
-                                    onChange={(e) => setFilters({...filters, distance: e.target.value})}
-                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
+                                <select value={filters.distance} onChange={(e) => setFilters({...filters, distance: e.target.value})} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     <option value="all">All Distances</option>
-                                    <option value="10K">10K</option>
-                                    <option value="25K">25K</option>
-                                    <option value="50K">50K</option>
-                                    <option value="50M">50M</option>
-                                    <option value="100M">100M</option>
-                                    <option value="100K">100K</option>
+                                    {standardDistances.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
-                                <select
-                                    value={sortBy}
-                                    onChange={(e) => setSortBy(e.target.value)}
-                                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="nextRaceDate">Race Date</option>
-                                    <option value="registrationOpens">Registration Opens</option>
-                                    <option value="name">Name</option>
+                                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="nextRaceDate">Race Date</option><option value="registrationOpens">Registration Opens</option><option value="name">Name</option>
                                 </select>
-                                <button
-                                    onClick={() => {
-                                        setFilters({ status: 'all', distance: 'all', searchTerm: '' });
-                                        setSortBy('nextRaceDate');
-                                    }}
-                                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
-                                >
-                                    Clear Filters
-                                </button>
+                                <button onClick={() => { setFilters({ status: 'all', distance: 'all', searchTerm: '' }); setSortBy('nextRaceDate'); }} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition">Clear Filters</button>
                             </div>
                         </div>
                     </div>
 
-                    {/* Race List */}
                     <div className="max-w-7xl mx-auto px-4 mt-6 pb-12">
                         {filteredAndSortedRaces.length === 0 ? (
-                            <div className="bg-white p-12 rounded-lg shadow text-center">
-                                <p className="text-gray-500 text-lg">
-                                    {races.length === 0 
-                                        ? "No races added yet. Click 'Add Race' to get started!"
-                                        : "No races match your filters."}
-                                </p>
-                            </div>
+                            <div className="bg-white p-12 rounded-lg shadow text-center"><p className="text-gray-500 text-lg">{races.length === 0 ? "No races added yet." : "No races match filters."}</p></div>
                         ) : (
                             <div className="space-y-4">
-                                {filteredAndSortedRaces.map(race => (
-                                    <RaceCard 
-                                        key={race.id} 
-                                        race={race} 
-                                        onEdit={() => {
-                                            setEditingRace(race);
-                                            setShowForm(true);
-                                        }}
-                                        onDelete={() => deleteRace(race.id)}
-                                        onStatusChange={(status) => updateRaceStatus(race.id, status)}
-                                    />
-                                ))}
+                                {filteredAndSortedRaces.map(race => <RaceCard key={race.id} race={race} onEdit={() => { setEditingRace(race); setShowForm(true); }} onStatusChange={updateRaceStatus} />)}
                             </div>
                         )}
                     </div>
 
-                    {/* Race Form Modal */}
-                    {showForm && (
-                        <RaceForm 
-                            race={editingRace}
-                            onSave={saveRace}
-                            onCancel={() => {
-                                setShowForm(false);
-                                setEditingRace(null);
-                            }}
-                        />
-                    )}
+                    {showForm && <RaceForm race={editingRace} onSave={saveRace} onCancel={() => { setShowForm(false); setEditingRace(null); }} onDelete={deleteRace} onCompleteNewRace={handleCompleteNewRace} />}
+                    {completingRace && <CompletionModal race={completingRace} onSave={saveRace} onCancel={() => setCompletingRace(null)} />}
                 </div>
             );
         }
 
-        // Race Card Component
-        function RaceCard({ race, onEdit, onDelete, onStatusChange }) {
-            const displayRaceDate = race.nextRaceDate || race.raceDate;
-            const displayRegDate = race.nextRegOpens || race.registrationOpens;
+        function RaceCard({ race, onEdit, onStatusChange }) {
+            const statusColors = { interested: 'bg-blue-100 text-blue-800', registered: 'bg-green-100 text-green-800', waitlist: 'bg-yellow-100 text-yellow-800', completed: 'bg-purple-100 text-purple-800' };
+            const statusContinuum = ['interested', 'waitlist', 'registered', 'completed'];
 
-            const daysUntilRace = dateUtils.daysUntil(displayRaceDate);
-            const daysUntilReg = dateUtils.daysUntil(displayRegDate);
-            
-            const statusColors = {
-                interested: 'bg-blue-100 text-blue-800',
-                registered: 'bg-green-100 text-green-800',
-                waitlist: 'bg-yellow-100 text-yellow-800',
-                completed: 'bg-purple-100 text-purple-800',
-                dns: 'bg-gray-100 text-gray-800',
-                dnf: 'bg-red-100 text-red-800'
-            };
+            if (race.status === 'completed') {
+                return (
+                    <div className="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
+                        <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-4 mb-2">
+                                    <h3 className="text-xl font-bold text-gray-900">{race.name}</h3>
+                                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors.completed}`}>
+                                        Completed
+                                        {race.completionState === 'dnf' && ' (DNF)'}
+                                        {race.completionState === 'dns' && ' (DNS)'}
+                                    </span>
+                                </div>
+                                <div className="text-gray-600 mb-3">📍 <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(race.location)}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{race.location}</a></div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                    <div><span className="text-sm text-gray-500">Race Date:</span><div className="font-medium">{dateUtils.formatDate(race.raceDate)}</div></div>
+                                    <div><span className="text-sm text-gray-500">Distance(s):</span><div className="font-medium">{race.distances.filter(d => d).join(', ')}</div></div>
+                                    {race.completionState === 'finished' && (<div><span className="text-sm text-gray-500">Time:</span><div className="font-medium">{race.time}</div></div>)}
+                                </div>
+                                {race.completionState === 'finished' && race.ageGrade && (<div className="border-t pt-3"><span className="text-sm text-gray-500">Age Grade Score:</span><div className="font-medium text-lg text-purple-700">{race.ageGrade}%</div></div>)}
+                                {race.userNotes && (<div className="mt-3 p-3 bg-gray-50 rounded text-sm text-gray-700">📝 {race.userNotes}</div>)}
+                            </div>
+                            <div className="flex flex-col items-center gap-2 ml-4">
+                                <svg className="w-16 h-16 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M15.5 2.5a.5.5 0 0 1 .5.5v1.334a3.5 3.5 0 0 1 1.5 2.982V14.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 1.5 14.5V7.316a3.5 3.5 0 0 1 1.5-2.982V3a.5.5 0 0 1 .5-.5h12zM10 6a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 1 0v-1a.5.5 0 0 0-.5-.5zM8 6a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 1 0v-1A.5.5 0 0 0 8 6zm4 0a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 1 0v-1a.5.5 0 0 0-.5-.5z"/></svg>
+                                <button onClick={onEdit} className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition mt-2">Edit</button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
 
             return (
                 <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6">
                     <div className="flex justify-between items-start">
                         <div className="flex-1">
-                            <div className="flex items-center gap-4 mb-2">
-                                <h3 className="text-xl font-bold text-gray-900">{race.name}</h3>
-                                <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[race.status]}`}>
-                                    {race.status}
-                                </span>
-                            </div>
-                            
-                            <div className="text-gray-600 mb-3">
-                                📍 <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(race.location)}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{race.location}</a>
-                            </div>
-                            
+                            <div className="flex items-center gap-4 mb-2"><h3 className="text-xl font-bold text-gray-900">{race.name}</h3><span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[race.status]}`}>{race.status}</span></div>
+                            <div className="text-gray-600 mb-3">📍 <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(race.location)}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{race.location}</a></div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                                <div>
-                                    <span className="text-sm text-gray-500">
-                                        {race.nextRegOpens ? 'Projected Registration:' : 'Registration Opens:'}
-                                    </span>
-                                    <div className="font-medium">
-                                        {dateUtils.formatDate(displayRegDate)}
-                                        {daysUntilReg >= 0 && daysUntilReg <= 30 && (
-                                            <span className="text-sm text-orange-600 ml-2 font-bold">
-                                                ({daysUntilReg} days!)
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                                <div>
-                                    <span className="text-sm text-gray-500">
-                                        {race.nextRaceDate ? 'Projected Race Date:' : 'Race Date:'}
-                                    </span>
-                                    <div className="font-medium">
-                                        {dateUtils.formatDate(displayRaceDate)}
-                                        {daysUntilRace >= 0 && (
-                                            <span className="text-sm text-blue-600 ml-2">
-                                                ({daysUntilRace} days)
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                                <div>
-                                    <span className="text-sm text-gray-500">Distances:</span>
-                                    <div className="font-medium">{race.distances.join(', ')}</div>
-                                </div>
+                                <div><span className="text-sm text-gray-500">{race.isProjected ? 'Projected Registration:' : 'Registration Opens:'}</span><div className="font-medium">{dateUtils.formatDate(race.registrationOpens)}</div></div>
+                                <div><span className="text-sm text-gray-500">{race.isProjected ? 'Projected Race Date:' : 'Race Date:'}</span><div className="font-medium">{dateUtils.formatDate(race.raceDate)}</div></div>
+                                <div><span className="text-sm text-gray-500">Distances:</span><div className="font-medium">{race.distances.filter(d => d).join(', ')}</div></div>
                             </div>
-
-                            {race.status === 'completed' && race.time && (
-                                <div className="border-t pt-3">
-                                    <span className="text-sm text-gray-500">Completed Time:</span>
-                                    <div className="font-medium">{race.time}</div>
-                                </div>
-                            )}
-
-                            {race.userNotes && (
-                                <div className="mt-3 p-3 bg-gray-50 rounded text-sm text-gray-700">
-                                    📝 {race.userNotes}
-                                </div>
-                            )}
+                            {race.userNotes && (<div className="mt-3 p-3 bg-gray-50 rounded text-sm text-gray-700">📝 {race.userNotes}</div>)}
                         </div>
-                        
                         <div className="flex flex-col gap-2 ml-4">
-                            <button
-                                onClick={onEdit}
-                                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
-                            >
-                                Edit
-                            </button>
-                            <button
-                                onClick={onDelete}
-                                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition"
-                            >
-                                Delete
-                            </button>
-                            {race.url && (
-                                <a
-                                    href={race.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-center"
-                                >
-                                    Visit Site
-                                </a>
-                            )}
+                            <button onClick={onEdit} className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition">Edit</button>
+                            {race.url && (<a href={race.url} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition text-center">Visit Site</a>)}
                         </div>
                     </div>
-                    
-                    {race.status === 'interested' && (
-                        <div className="mt-4 flex gap-2">
-                            <button
-                                onClick={() => onStatusChange('registered')}
-                                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition"
-                            >
-                                Mark as Registered
-                            </button>
-                            <button
-                                onClick={() => onStatusChange('waitlist')}
-                                className="px-3 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 transition"
-                            >
-                                Waitlist
-                            </button>
-                        </div>
+                    <div className="mt-4 flex rounded-lg border status-continuum">
+                        {statusContinuum.map(status => <button key={status} onClick={() => onStatusChange(race.id, status)} className={`px-3 py-2 text-sm capitalize transition ${race.status === status ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}>{status}</button>)}
+                    </div>
+                </div>
+            );
+        }
+        
+        function TrainingCalendar({ races }) {
+            const [currentDate, setCurrentDate] = useState(new Date());
+            const trainingBlocks = useMemo(() => {
+                const blocks = {};
+                races.forEach(race => {
+                    if (!race.raceDate || new Date(race.raceDate) < new Date()) return;
+                    const isLongRace = race.distances.some(d => { const value = parseFloat(d), unit = d.toLowerCase().replace(/[0-9.]/g, ''); if (unit === 'k') return value > 21.1; if (unit === 'm') return true; return false; });
+                    const trainingWeeks = isLongRace ? 16 : 6;
+                    const startDate = dateUtils.subtractDays(race.raceDate, trainingWeeks * 7);
+                    let currentDateIter = new Date(startDate + 'T00:00:00');
+                    const endDate = new Date(race.raceDate + 'T00:00:00');
+                    while(currentDateIter <= endDate) {
+                        const dateString = currentDateIter.toISOString().split('T')[0];
+                        if (!blocks[dateString]) blocks[dateString] = [];
+                        blocks[dateString].push({ name: race.name, color: isLongRace ? 'bg-red-400' : 'bg-green-400' });
+                        currentDateIter.setDate(currentDateIter.getDate() + 1);
+                    }
+                });
+                return blocks;
+            }, [races]);
+
+            const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1), endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+            const startDay = startOfMonth.getDay(), daysInMonth = endOfMonth.getDate();
+            const today = new Date(); today.setHours(0,0,0,0);
+            const calendarDays = [];
+            for (let i = 0; i < startDay; i++) calendarDays.push(<div key={`empty-${i}`} className="border p-2"></div>);
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day), dateString = date.toISOString().split('T')[0];
+                const isToday = date.getTime() === today.getTime(), dayBlocks = trainingBlocks[dateString] || [];
+                calendarDays.push(<div key={day} className={`border p-2 calendar-day ${isToday ? 'bg-blue-100' : ''}`}><div className="font-bold">{day}</div>{dayBlocks.map((block, i) => <div key={i} className={`training-bar ${block.color}`} title={block.name}></div>)}</div>);
+            }
+
+            return <div className="max-w-7xl mx-auto px-4 mt-6"><div className="bg-white p-4 rounded-lg shadow"><div className="flex justify-between items-center mb-4"><button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))}>&lt;</button><h3 className="text-lg font-semibold">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3><button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))}>&gt;</button></div><div className="grid grid-cols-7 gap-1 text-center">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} className="font-bold text-sm text-gray-600">{day}</div>)}{calendarDays}</div></div></div>;
+        }
+
+        function DistanceInput({ value, onChange }) {
+            const isOther = value && !standardDistances.includes(value);
+            const selectValue = isOther ? 'Other' : value;
+
+            return (
+                <div className="flex items-center gap-2">
+                    <select value={selectValue} onChange={(e) => onChange(e.target.value === 'Other' ? '' : e.target.value)} className="w-full px-3 py-2 border rounded-lg">
+                        <option value="">Select Distance</option>
+                        {standardDistances.map(d => <option key={d} value={d}>{d}</option>)}
+                        <option value="Other">Other...</option>
+                    </select>
+                    {selectValue === 'Other' && (
+                        <input type="text" placeholder="Custom" value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
                     )}
                 </div>
             );
         }
 
-        // Race Form Component
-        function RaceForm({ race, onSave, onCancel }) {
-            const [formData, setFormData] = useState(race || {
-                id: generateId(),
-                name: '',
-                url: '',
-                location: '',
-                distances: [],
-                elevation: '',
-                price: '',
-                terrain: 'trail',
-                raceDate: '',
-                registrationOpens: '',
-                status: 'interested',
-                time: '', // For completed races
-                userNotes: '',
-                performances: [],
-                nextRaceDate: '',
-                nextRegOpens: '',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            });
-
-            const [distanceInput, setDistanceInput] = useState('');
+        function RaceForm({ race, onSave, onCancel, onDelete, onCompleteNewRace }) {
+            const [formData, setFormData] = useState(race || { id: generateId(), name: '', url: '', location: '', distances: [''], elevation: '', price: '', terrain: 'road', raceDate: '', registrationOpens: '', status: 'interested', time: '', userNotes: '', isProjected: false, isRecurring: false, dateEntryType: 'project' });
+            useEffect(() => { if (race) setFormData(prev => ({...prev, dateEntryType: race.isProjected ? 'project' : 'known'})); }, [race]);
 
             const handleSubmit = (e) => {
                 e.preventDefault();
-                
-                let updatedData = { ...formData };
-                
-                if (formData.raceDate) {
-                    updatedData.nextRaceDate = dateUtils.predictNextRaceDate(formData.raceDate);
+                let finalData = { ...formData, distances: formData.distances.filter(d => d && d.trim() !== '') };
+                if (formData.dateEntryType === 'project') {
+                    finalData.isProjected = true;
+                    const projectedRaceDate = dateUtils.predictNextRaceDate(formData.raceDate);
+                    finalData.registrationOpens = dateUtils.predictRegistrationOpen(formData.raceDate, projectedRaceDate, formData.registrationOpens);
+                    finalData.raceDate = projectedRaceDate;
+                } else {
+                    finalData.isProjected = false;
                 }
-                
-                if (updatedData.nextRaceDate && formData.registrationOpens) {
-                    updatedData.nextRegOpens = dateUtils.predictRegistrationOpen(
-                        formData.raceDate,
-                        updatedData.nextRaceDate,
-                        formData.registrationOpens
-                    );
-                }
-                
-                updatedData.updatedAt = new Date().toISOString();
-                onSave(updatedData);
-            };
-
-            const addDistance = () => {
-                if (distanceInput && !formData.distances.includes(distanceInput)) {
-                    setFormData({
-                        ...formData,
-                        distances: [...formData.distances, distanceInput]
-                    });
-                    setDistanceInput('');
+                if (!race && finalData.status === 'completed') {
+                    onCompleteNewRace(finalData);
+                } else {
+                    onSave(finalData);
                 }
             };
 
-            const removeDistance = (distance) => {
-                setFormData({
-                    ...formData,
-                    distances: formData.distances.filter(d => d !== distance)
-                });
-            };
+            const handleDistanceChange = (index, value) => setFormData({...formData, distances: formData.distances.map((d, i) => i === index ? value : d)});
+            const addDistanceField = () => setFormData({...formData, distances: [...formData.distances, '']});
+            const removeDistanceField = (index) => setFormData({...formData, distances: formData.distances.filter((_, i) => i !== index)});
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-                        <div className="p-6">
-                            <h2 className="text-2xl font-bold mb-6">
-                                {race ? 'Edit Race' : 'Add New Race'}
-                            </h2>
-                            
-                            <form onSubmit={handleSubmit}>
-                                {/* Basic Info */}
-                                <div className="space-y-4 mb-6">
-                                    <h3 className="font-semibold text-lg text-gray-700">Basic Information</h3>
-                                    
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Race Name *
-                                            </label>
-                                            <input
-                                                type="text"
-                                                required
-                                                value={formData.name}
-                                                onChange={(e) => setFormData({...formData, name: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                        </div>
-                                        
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Website URL
-                                            </label>
-                                            <input
-                                                type="url"
-                                                value={formData.url}
-                                                onChange={(e) => setFormData({...formData, url: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                        </div>
-                                    </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Location (e.g., City, Province)
-                                        </label>
-                                        <input
-                                            type="text"
-                                            placeholder="Address or City, Province"
-                                            value={formData.location}
-                                            onChange={(e) => setFormData({...formData, location: e.target.value})}
-                                            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                        />
-                                        <p className="text-xs text-gray-500 mt-1">This will be saved as a link to Google Maps.</p>
-                                    </div>
-
-                                    <div className="grid grid-cols-3 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Elevation (meters)
-                                            </label>
-                                            <input
-                                                type="number"
-                                                value={formData.elevation}
-                                                onChange={(e) => setFormData({...formData, elevation: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Price (CAD)
-                                            </label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                value={formData.price}
-                                                onChange={(e) => setFormData({...formData, price: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Terrain
-                                            </label>
-                                            <select
-                                                value={formData.terrain}
-                                                onChange={(e) => setFormData({...formData, terrain: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            >
-                                                <option value="trail">Trail</option>
-                                                <option value="road">Road</option>
-                                                <option value="mixed">Mixed</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Distances */}
-                                <div className="space-y-4 mb-6">
-                                    <h3 className="font-semibold text-lg text-gray-700">Distance</h3>
-                                    
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            placeholder="e.g., 50K"
-                                            value={distanceInput}
-                                            onChange={(e) => setDistanceInput(e.target.value)}
-                                            onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addDistance())}
-                                            className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={addDistance}
-                                            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
-                                        >
-                                            Add More
-                                        </button>
-                                    </div>
-                                    
-                                    <div className="flex flex-wrap gap-2">
-                                        {formData.distances.map(d => (
-                                            <span key={d} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full flex items-center gap-2">
-                                                {d}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removeDistance(d)}
-                                                    className="text-blue-600 hover:text-blue-800"
-                                                >
-                                                    ×
-                                                </button>
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Dates */}
-                                <div className="space-y-4 mb-6">
-                                    <h3 className="font-semibold text-lg text-gray-700">Current Race Dates</h3>
-                                     <p className="text-xs text-gray-500 -mt-3">Fill out current dates and we'll project when registration opens and the race may be held for next year.</p>
-                                    
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Registration Opens
-                                            </label>
-                                            <input
-                                                type="date"
-                                                value={formData.registrationOpens}
-                                                onChange={(e) => setFormData({...formData, registrationOpens: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Race Date *
-                                            </label>
-                                            <input
-                                                type="date"
-                                                required
-                                                value={formData.raceDate}
-                                                onChange={(e) => setFormData({...formData, raceDate: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Status and Notes */}
-                                <div className="space-y-4 mb-6">
-                                    <h3 className="font-semibold text-lg text-gray-700">Status & Notes</h3>
-                                    
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Status
-                                            </label>
-                                            <select
-                                                value={formData.status}
-                                                onChange={(e) => setFormData({...formData, status: e.target.value})}
-                                                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            >
-                                                <option value="interested">Interested</option>
-                                                <option value="registered">Registered</option>
-                                                <option value="waitlist">Waitlist</option>
-                                                <option value="completed">Completed</option>
-                                                <option value="dns">DNS</option>
-                                                <option value="dnf">DNF</option>
-                                            </select>
-                                        </div>
-                                        
-                                        {formData.status === 'completed' && (
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Completion Time (HH:MM:SS)
-                                                </label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="e.g., 12:34:56"
-                                                    value={formData.time}
-                                                    onChange={(e) => setFormData({...formData, time: e.target.value})}
-                                                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Notes
-                                        </label>
-                                        <textarea
-                                            value={formData.userNotes}
-                                            onChange={(e) => setFormData({...formData, userNotes: e.target.value})}
-                                            rows="3"
-                                            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Buttons */}
-                                <div className="flex justify-end gap-4 pt-4 border-t">
-                                    <button
-                                        type="button"
-                                        onClick={onCancel}
-                                        className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
-                                    >
-                                        {race ? 'Save Changes' : 'Add Race'}
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
+                    <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto"><div className="p-6"><h2 className="text-2xl font-bold mb-6">{race ? 'Edit Race' : 'Add New Race'}</h2><form onSubmit={handleSubmit}>
+                        <div className="space-y-4 mb-6"><h3 className="font-semibold text-lg text-gray-700">Basic Information</h3><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Race Name *</label><input type="text" required value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} className="w-full px-3 py-2 border rounded-lg"/></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Website URL</label><input type="url" value={formData.url} onChange={(e) => setFormData({...formData, url: e.target.value})} className="w-full px-3 py-2 border rounded-lg"/></div></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Location</label><input type="text" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div><div className="grid grid-cols-3 gap-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">Terrain</label><select value={formData.terrain} onChange={(e) => setFormData({...formData, terrain: e.target.value})} className="w-full px-3 py-2 border rounded-lg"><option value="road">Road</option><option value="trail">Trail</option><option value="mixed">Mixed</option></select></div>{formData.terrain === 'trail' && (<div><label className="block text-sm font-medium text-gray-700 mb-1">Elevation (m)</label><input type="number" value={formData.elevation} onChange={(e) => setFormData({...formData, elevation: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div>)}<div><label className="block text-sm font-medium text-gray-700 mb-1">Price (CAD)</label><input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData({...formData, price: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div></div></div>
+                        <div className="space-y-2 mb-6"><h3 className="font-semibold text-lg text-gray-700">Distances</h3>{formData.distances.map((distance, index) => (<div key={index} className="flex items-center gap-2"><DistanceInput value={distance} onChange={(val) => handleDistanceChange(index, val)} />{formData.distances.length > 1 && <button type="button" onClick={() => removeDistanceField(index)} className="text-red-500 font-bold">X</button>}</div>))}<button type="button" onClick={addDistanceField} className="text-sm text-blue-600 hover:underline">+ Add Another Distance</button></div>
+                        <div className="space-y-4 mb-6"><h3 className="font-semibold text-lg text-gray-700">Race Dates</h3><div className="flex gap-4"><label><input type="radio" name="dateEntryType" value="project" checked={formData.dateEntryType === 'project'} onChange={(e) => setFormData({...formData, dateEntryType: e.target.value})} /> Project from Past Date</label><label><input type="radio" name="dateEntryType" value="known" checked={formData.dateEntryType === 'known'} onChange={(e) => setFormData({...formData, dateEntryType: e.target.value})} /> Enter Known Future Date</label></div><p className="text-xs text-gray-500 -mt-3">{formData.dateEntryType === 'project' ? "Enter the most recent race date." : "Enter the confirmed future date."}</p><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-gray-700 mb-1">{formData.dateEntryType === 'project' ? 'Last Reg. Opens' : 'Reg. Opens'}</label><input type="date" value={formData.registrationOpens} onChange={(e) => setFormData({...formData, registrationOpens: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div><div><label className="block text-sm font-medium text-gray-700 mb-1">{formData.dateEntryType === 'project' ? 'Last Race Date *' : 'Race Date *'}</label><input type="date" required value={formData.raceDate} onChange={(e) => setFormData({...formData, raceDate: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div></div></div>
+                        <div className="space-y-4 mb-6"><h3 className="font-semibold text-lg text-gray-700">Status & Notes</h3><div><label className="block text-sm font-medium text-gray-700 mb-1">Status</label><select value={formData.status} onChange={(e) => setFormData({...formData, status: e.target.value})} className="w-full px-3 py-2 border rounded-lg"><option value="interested">Interested</option><option value="registered">Registered</option><option value="waitlist">Waitlist</option><option value="completed">Completed</option></select></div><div><label className="block text-sm font-medium text-gray-700 mb-1">Notes</label><textarea value={formData.userNotes} onChange={(e) => setFormData({...formData, userNotes: e.target.value})} rows="3" className="w-full px-3 py-2 border rounded-lg" /></div><div><label className="flex items-center"><input type="checkbox" checked={formData.isRecurring} onChange={(e) => setFormData({...formData, isRecurring: e.target.checked})} className="mr-2"/> Save as recurring race</label></div></div>
+                        <div className="flex justify-between items-center pt-4 border-t"><div>{race && <button type="button" onClick={() => onDelete(race.id)} className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">Delete Race</button>}</div><div className="flex gap-4"><button type="button" onClick={onCancel} className="px-6 py-2 border rounded-lg">Cancel</button><button type="submit" className="px-6 py-2 bg-blue-500 text-white rounded-lg">{race ? 'Save Changes' : 'Add Race'}</button></div></div>
+                    </form></div></div>
                 </div>
             );
         }
+        
+        function CompletionModal({ race, onSave, onCancel }) {
+            const [completionData, setCompletionData] = useState({ time: race.time || '', age: race.ageAtRace || '', gender: race.gender || 'M', completionState: race.completionState || 'finished' });
+            const [ageGrade, setAgeGrade] = useState(race.ageGrade || null);
+            useEffect(() => { setAgeGrade(ageGradeUtils.calculate(completionData.age, completionData.gender, race.distances[0], completionData.time)); }, [completionData, race.distances]);
 
-        // Render the app
+            const handleSave = () => { onSave({ ...race, status: 'completed', time: completionData.time, ageAtRace: completionData.age, gender: completionData.gender, completionState: completionData.completionState, ageGrade: ageGrade }); };
+            
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"><div className="bg-white rounded-lg max-w-md w-full p-6">
+                    <h2 className="text-2xl font-bold mb-4">Log Completion: {race.name}</h2>
+                    <div className="space-y-4">
+                        <div><label className="block text-sm font-medium text-gray-700 mb-1">Finish Status</label><select value={completionData.completionState} onChange={e => setCompletionData({...completionData, completionState: e.target.value})} className="w-full px-3 py-2 border rounded-lg"><option value="finished">Finished</option><option value="dnf">DNF (Did Not Finish)</option><option value="dns">DNS (Did Not Start)</option></select></div>
+                        {completionData.completionState === 'finished' && (
+                            <>
+                                <div><label className="block text-sm font-medium text-gray-700 mb-1">Completion Time (HH:MM:SS)</label><input type="text" placeholder="e.g., 12:34:56" value={completionData.time} onChange={e => setCompletionData({...completionData, time: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div><label className="block text-sm font-medium text-gray-700 mb-1">Age at Race</label><input type="number" value={completionData.age} onChange={e => setCompletionData({...completionData, age: e.target.value})} className="w-full px-3 py-2 border rounded-lg" /></div>
+                                    <div><label className="block text-sm font-medium text-gray-700 mb-1">Gender</label><select value={completionData.gender} onChange={e => setCompletionData({...completionData, gender: e.target.value})} className="w-full px-3 py-2 border rounded-lg"><option value="M">Male</option><option value="F">Female</option></select></div>
+                                </div>
+                                {ageGrade && <div className="text-center p-2 bg-gray-100 rounded">Age Grade Score: <span className="font-bold">{ageGrade}%</span></div>}
+                            </>
+                        )}
+                    </div>
+                    <div className="flex justify-end gap-4 pt-6 mt-4 border-t"><button onClick={onCancel} className="px-6 py-2 border rounded-lg">Cancel</button><button onClick={handleSave} className="px-6 py-2 bg-blue-500 text-white rounded-lg">Save Completion</button></div>
+                </div></div>
+            );
+        }
+
         ReactDOM.render(<RaceTracker />, document.getElementById('root'));
     </script>
 </body>
